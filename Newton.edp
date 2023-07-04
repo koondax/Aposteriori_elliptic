@@ -1,0 +1,721 @@
+/************************************************************************
+%%%%%%%%%%%%%%%%%%%%%% DESCRIPTION %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+ * Guaranteed, locally efficient, and robust a posteriori estimates for nonlinear elliptic problems in iteration-dependent norms:
+ * An orthogonal decomposition result based on iterative linearization
+ * authors: K. Mitra, M. Vohralik 
+ * link: 
+ * details: code for general nonlinear elliptic problems
+ * usage: script for FreeFem++ 
+ * file: Main_aposteriori.edp  
+ * author: Koondanibha Mitra
+ * based on scripts by Fréderic Hecht, Zuqi Tang, and Benjamin Stamm
+ * expanding the code:  K. Mitra and M. Vohralik, A-posteriori error estimates for Richards equation (2021)
+ * year: 2023
+ * Description: This code implements Newton scheme for time-discretized Richards equation. It is a older version of the code and hence
+ * the estimators are defined slightly differently although the overall effectivity indices remain roughly the same. 
+ * (see main.edp for the most current version).
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%*/
+
+
+
+
+load "Element_Mixte" 
+
+
+//SECTION_____________________________________________________
+//%%%%%%%%%%%%%%% MAIN DEFINITIONS%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+//%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+//Subsection%%%%%%%%%%%%%%%DEFINITION CONSTANTS%%%%%%%%%%%%%%%
+verbosity=0;
+int Nh=20;//Number of meshes on each side
+real dt=1;//time-step size
+real L=1.0/6.0, M=0.1;// The parameter L>0 for L-scheme and M>0 for M-scheme
+int Iter=1, IterNum=30, IterAdap=4;//iteration number; maximum iteration number allowed, Number of iterations after which adaptive criteria will be checked
+real[int] errLin(IterNum),errFlux(IterNum),errSource(IterNum),errOsc(IterNum),errTot(IterNum), errorExt(IterNum), EffInd(IterNum);//Linearisation H^1 error
+int lvl=4, Nref=100;//determines the refinement of the refence mesh with respect to the base mesh 
+real g=1;//value of gravity
+int SaveInt=4, AdapStop=0;//Interval for plotting data and saving
+real[int] isovalues(51);// Number of levels of colors in the plot
+real MaxVarCons=1;//Maximum Variability constant
+real Cstar=20;
+real gStop=0.05;//Numerical paramters for adaptivity
+
+//Subsection%%%%%%%%%%%%%% COLOR SCHEMES%%%%%%%%%%%%%%%%%%%%%%%%%
+real[int] jet = [
+     0.6667,    1.0000,    0.5625,
+     0.6667,    1.0000,    0.6250,
+     0.6667,    1.0000,    0.6875,
+     0.6667,    1.0000,    0.7500,
+     0.6667,    1.0000,    0.8125,
+     0.6667,    1.0000,    0.8750,
+     0.6667,    1.0000,    0.9375,
+     0.6667,    1.0000,    1.0000,
+     0.6563,    1.0000,    1.0000,
+     0.6458,    1.0000,    1.0000,
+     0.6354,    1.0000,    1.0000,
+     0.6250,    1.0000,    1.0000,
+     0.6146,    1.0000,    1.0000,
+     0.6042,    1.0000,    1.0000,
+     0.5938,    1.0000,    1.0000,
+     0.5833,    1.0000,    1.0000,
+     0.5729,    1.0000,    1.0000,
+     0.5625,    1.0000,    1.0000,
+     0.5521,    1.0000,    1.0000,
+     0.5417,    1.0000,    1.0000,
+     0.5313,    1.0000,    1.0000,
+     0.5208,    1.0000,    1.0000,
+     0.5104,    1.0000,    1.0000,
+     0.5000,    1.0000,    1.0000,
+     0.4889,    0.9375,    1.0000,
+     0.4762,    0.8750,    1.0000,
+     0.4615,    0.8125,    1.0000,
+     0.4444,    0.7500,    1.0000,
+     0.4242,    0.6875,    1.0000,
+     0.4000,    0.6250,    1.0000,
+     0.3704,    0.5625,    1.0000,
+     0.3333,    0.5000,    1.0000,
+     0.2963,    0.5625,    1.0000,
+     0.2667,    0.6250,    1.0000,
+     0.2424,    0.6875,    1.0000,
+     0.2222,    0.7500,    1.0000,
+     0.2051,    0.8125,    1.0000,
+     0.1905,    0.8750,    1.0000,
+     0.1778,    0.9375,    1.0000,
+     0.1667,    1.0000,    1.0000,
+     0.1563,    1.0000,    1.0000,
+     0.1458,    1.0000,    1.0000,
+     0.1354,    1.0000,    1.0000,
+     0.1250,    1.0000,    1.0000,
+     0.1146,    1.0000,    1.0000,
+     0.1042,    1.0000,    1.0000,
+     0.0938,    1.0000,    1.0000,
+     0.0833,    1.0000,    1.0000,
+     0.0729,    1.0000,    1.0000,
+     0.0625,    1.0000,    1.0000,
+     0.0521,    1.0000,    1.0000,
+     0.0417,    1.0000,    1.0000,
+     0.0313,    1.0000,    1.0000,
+     0.0208,    1.0000,    1.0000,
+     0.0104,    1.0000,    1.0000,
+          0,    1.0000,    1.0000,
+          0,    1.0000,    0.9375,
+          0,    1.0000,    0.8750,
+          0,    1.0000,    0.8125,
+          0,    1.0000,    0.7500,
+          0,    1.0000,    0.6875,
+          0,    1.0000,    0.6250,
+          0,    1.0000,    0.5625,
+          0,    1.0000,    0.5000]; // standard matlab jet colormap
+
+
+
+//Subsection%%%%%%%%%%%%DEFINITION: FUNCTIONS (customizable)%%%%%%%%%%%%%%%%%%%
+real Pinput=0.8, Poutput=-3;
+
+
+
+func real Sat(real p)//Saturation function
+{
+ 
+real result;  
+if (p<1)
+      result = 1/pow(1+pow(2-p,2),0.5);
+   else
+      result = 1;
+ 
+   return result;
+
+};
+
+func real dSat(real p)//capillary pressure function
+{
+
+if (p<1)
+      return (2-p)/pow(1+pow(2-p,2),1.5);
+   else
+      return 0;
+};
+
+
+func real Perm(real s)//Permeability function
+{ 
+  if(s<1)
+   return sqrt(s)*pow(1-pow(1-s^2,0.5),2);
+  else 
+   return 1;
+};
+
+
+func real dPerm(real p)//Permeability function
+{ 
+
+ real dK, s=Sat(p);
+
+  if(s<1)
+{
+   dK= pow(1-pow(1-s^2,0.5),2)/(2*sqrt(s));
+   dK+=2*sqrt(s)*((1/pow(1-s^2,0.5))-1)*s;
+   dK*=dSat(p);
+   return dK;
+}
+  else 
+   return 0;
+};
+
+
+
+func K=[[1, 0.2], [0.2, 1]];//Here a constant anisotropic tensor is used
+
+
+real Kdiag=5.0/24.0, Km=0.8;
+func Kinv=[[5*Kdiag, -Kdiag],[-Kdiag, 5*Kdiag]];//This is the inverse of K
+
+//func Kinv=K;
+
+
+
+//THIS FUNCTION CHARACTERISES THE NEWTON ITERATION
+func real LinFac(real p)
+{ 
+ return dSat(p);
+}
+
+
+
+
+//Subsection%%%%%%%%%%%%%%%%%%%%%% MACROS %%%%%%%%%%%%%%%%%%%%%%
+
+macro RTN RT2		// RT pw polynomial space: "RT1" or "RT2" (more not in FreeFem++) ("RT0" in case 1 OK)
+macro Pdisc P2dc	// Lagrange multipliers of the RT space: "P1dc" or "P2dc" ("P0" in case 1 OK)
+macro Pmdisc P1dc	// Pdisc-1
+
+macro SolverGlob sparsesolver	// global system linear solver: CG or sparsesolver 
+macro SolverLoc sparsesolver	// local systems linear solver: LU or sparsesolver 
+
+
+
+macro grad(u) [dx(u), dy(u)] //Gradient
+macro Div(u1,u2) (dx(u1) + dy(u2))//Divergence
+
+
+
+//SECTION______________________________________________________
+//%%%%%%%%%%%%%%%%%%%%%%% Mesh and FEM spaces  %%%%%%%%%%%%%%%%
+border CD1(t=0, 1){x=t; y=0; label=1;}
+border CD2(t=0, 1){x=1; y=t; label=2;}
+border CN1(t=0, .5){x=1-t; y=1; label=5;}
+border CD3(t=0, .5){x=.5-t; y=1; label=3;}
+border CD4(t=0, .5){x=0; y=1-t; label=4;}
+border CN2(t=0, .5){x=0; y=0.5-t; label=6;}
+real h=1.0/Nh;
+
+mesh Th = buildmesh(CD1(lround(1.0/h)) + CD2(lround(1.0/h)) + CN1(lround(0.5/h)) + CD3(lround(0.5/h)) + CD4(lround(0.5/h))+ CN2(lround(0.5/h)) );
+mesh Tref = buildmesh(CD1(Nref) + CD2(Nref) + CN1(Nref/2) + CD3(Nref/2) + CD4(Nref/2)+ CN2(Nref/2) );//Reference solution domain, 
+//mesh Tref =trunc(Th,split=lvl, 1); 
+mesh ThLoc=Th;//Local domains
+
+// Fespace------------------------------------------------------
+fespace Vh(Th, P1);//Main space on the variables
+fespace Vref(Tref,P1);
+fespace Vdisc(Th,Pmdisc);
+
+
+Vh u, v, du, uiter;//The main unknowns 
+Vh err;//Error measure for linearisation
+Vh psia=0;//Hat functions
+
+
+Vref uref, vref, duref, uini, vini, uold;
+
+// space of piecewise constants for various plots
+fespace Wh0(Th,P0); 
+
+Wh0 ChiK, AreaK, hK, wK, welem;//Characteristic function on element K & Diameter of K
+
+// RT function spaces and variables -------------------------
+fespace RTGlob(Th,[RTN,Pdisc]); // global 
+fespace RTflux(Th,[Pdisc,Pdisc]);//RT space for calculating the flux projection 
+
+fespace RTLoc(ThLoc,[RTN,Pdisc]); // local 
+fespace WhLoc(ThLoc,P0); // local RT Lagrange multiplier space
+
+
+RTGlob [sigma1,sigma2,Sproj]=[0,0,0]; // global equilibrated flux and potential
+
+// global-local numbering
+RTGlob [gnum1,gnum2,gnum3]; // auxiliary fields 
+gnum1[]= 1:gnum1[].n; // gnum1[] contains numbering of global DoFs, starting from 1, to #DoFs
+
+
+
+
+//Subsection %%%%%%%%%%%%%%% Local Mesh Construction %%%%%%%%%
+// Loop on all degrees of freedom
+int Nelem=Th.nt;
+int Ntot=psia.n;
+real[int] wa(Ntot), diamA(Ntot), varCons(Ntot);
+mesh[int] Ta(Ntot);
+
+int[int] BoundaryMarker(Ntot);
+
+
+for (int i = 0; i < Ntot; i++){
+    psia[][i] = 1; // The basis function i
+    Ta[i] = trunc(Th, psia>0, label=10);
+    psia[][i] = 0; // reset
+//   plot(Th, Ta[i]);
+
+
+fespace Ph(Ta[i], P0);
+Ph haf = hTriangle;
+
+diamA[i]=2*haf[].max;// Estimates the diameter of Ta factor 3 is used instead of 2 to have a factor of safety
+
+if(Th(i).label==0) //interior vertex
+		{
+		Ta[i]=change(Ta[i],flabel=10); // make sure label=10 on the whole boundary of the patch
+
+BoundaryMarker[i]=1;
+		}
+else
+BoundaryMarker[i]=0;
+}
+
+
+// Determining Diameter of cells____________________________
+for (int i = 0; i < Nelem; i++){
+
+AreaK[][i]=Th[i].area;
+wK[][i]=1;
+ThLoc= trunc(Th, wK>0);
+fespace Ph(ThLoc, P0);
+Ph haf = hTriangle;
+hK[][i]=haf[].max;
+wK[][i]=0;
+
+}
+
+
+
+//Subsection%%%%%%%%%%% MAIN PROBLEM %%%%%%%%%%%%%%%%%%%%%%%%
+
+
+varf BilinearForm(u, v)//The main solver
+    = int2d(Th)(
+      LinFac(uiter)*u*v + dt*Perm(Sat(uiter))*(grad(v)'*K*grad(u))
++ dt*dPerm(uiter)*u*(grad(v)'*K*(grad(uiter)-[g,0]))
+)
+      + on(5,u=Poutput) + on(6,u=Pinput) 
+    ;//on(1,2,3,4,u=0)
+
+varf Functional(unused,v) =int2d(Th)(LinFac(uiter)*uiter*v)
+
+      - int2d(Th)((Sat(uiter)-Sat(uold))*v)
+
+      + int2d(Th)(dt*Perm(Sat(uiter))*grad(v)'*K*[g,0]
+
++ dt*dPerm(uiter)*uiter*(grad(v)'*K*(grad(uiter)-[g,0])))
+
+      
+       + on(5, unused=Poutput)+on(6,unused=Pinput);
+
+
+
+//A problem to compute an H1 intial condition
+problem LaplaceIni(uini, vini)
+    = int2d(Tref)(grad(vini)'*K*grad(uini))
+     -int2d(Tref)(grad(vini)'*K*[g,0])
+    + on(5,uini=Poutput) + on(6,uini=Pinput);
+
+LaplaceIni;
+uold=uini;
+plot(Th,uold);
+
+
+//REFERENCE Solution in each iteration_________________________
+problem RefSol(duref, vref)//The main solver
+    = int2d(Tref)(LinFac(uiter)*duref*vref + dt*Perm(Sat(uiter))*(grad(duref)'*K*grad(vref)))
++ int2d(Tref)((Sat(uiter)-Sat(uold))*vref+dt*Perm(Sat(uiter))*grad(vref)'*K*(grad(uiter)-[g,0]))
+      + on(5,duref=0) + on(6,duref=0) 
+    ;//
+
+
+//SECTION_____________________________________________________
+//%%%%%%%%%%%%%%%%%%%%%%%%%% MAIN ELLIPTIC SOLVER %%%%%%%%%%%%%%%
+//%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+//--------------------------------------------------------------
+
+//Subsection%%%%%%%%%%%Initialization%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+Wh0 temp, EstFl, EstS, EstOsc, EstK, EstQdFl, EstQdS, EstLin, Eff;
+Wh0 ErrR, ErrRlin;
+
+
+
+
+//FILE NAME---------------------------------------------------
+
+ofstream FileErrLin("Output/ErrLin.txt");//Write H1 total error
+
+ofstream FileSol("Output/Exact_sol.txt");
+
+ofstream FileFl("Output/EstFl.txt");
+ofstream FileS("Output/EstS.txt");
+ofstream FileEstK("Output/EstK.txt");
+ofstream FileOsc("Output/EstOsc.txt");
+ofstream FileQdFl("Output/EstQuadFl.txt");
+ofstream FileQdS("Output/EstQuadS.txt");
+
+
+ofstream FileErr("Output/Error.txt");
+
+
+//Subsection%%%%%%%%%%%%%%%%%%%MAIN LOOP%%%%%%%%%%%%%%%%%%%%%%
+    
+for(Iter = 1; Iter<IterNum; Iter++)//LINEARIZATION LOOP
+{
+    uiter=u;
+
+//<<<<<<<<<<<<<<<<< MAIN SOLVER>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+
+
+// find the FE approximation
+matrix Astiff=BilinearForm(Vh,Vh,solver=SolverGlob);
+real[int] FuncRHS=Functional(0,Vh);
+u[]=Astiff^-1*FuncRHS;
+du=u-uiter;
+
+//<<<<<<<<<<<<<<<<<<END MAIN LOOP>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+
+
+//Subsection%%%%%%%%%%%%%%USEFUL QUANTITIES%%%%%%%%%%%%%%%%%%%%%
+func PermI=Perm(Sat(uiter));
+func dPermI=dPerm(uiter);
+func LinI=LinFac(uiter);
+func LinS=(Sat(uiter)-Sat(uold))-LinI*uiter; //Linearisation Source
+func Lin0=LinI*u;//Combined Source
+func Flux=dt*PermI*(grad(u)-[g,0])+dt*dPermI*du*(grad(uiter)-[g,0]);//Linearization term for flux
+
+
+// Calculating the projections
+Vdisc Shproj, qproj;
+problem SourceProj(Shproj,qproj)=int2d(Th)(Shproj*qproj)-int2d(Th)(LinS*qproj);
+SourceProj;
+
+
+
+RTflux [Fproj1,Fproj2], [fl1,fl2];
+problem FluxProj([Fproj1,Fproj2], [fl1,fl2])=int2d(Th)([fl1,fl2]'*K*[Fproj1,Fproj2])-int2d(Th)([fl1,fl2]'*K*Flux);
+
+FluxProj;
+
+
+
+//********************CONTROL FOR THE FIXED ERROR CASE*******************************
+errLin[Iter]=sqrt(int2d(Tref)(LinI*du*du + dt*PermI*(grad(du)'*K*grad(du))));
+
+
+if (errLin[Iter]>10)
+{
+ cout<<endl<<"ERROR: LINEAR ITERATIONS HAVE DIVERGED"<<endl;
+ break;
+}
+else if(errLin[Iter]<1e-12)
+{
+plot(Th,u,fill=1,value=true,cmm="Pressure plot",ps="Output/Pressure_plot"+".eps");
+
+
+//Saving variable elementwise
+for(int i=0;i<Nelem;i++) FileSol<<u[][i]<<"\t";
+
+ break;
+}
+
+//******************** ELEMENT WISE MINIMUM CALCULATION************************************
+
+Wh0 minA, maxA, minL, maxL;
+real uKmin, uKmax;
+
+for (int i = 0; i < Nelem; i++){
+uKmin=min(u[][Th[i][0]],u[][Th[i][1]],u[][Th[i][2]]);
+uKmax=max(u[][Th[i][0]],u[][Th[i][1]],u[][Th[i][2]]);
+
+
+
+minL[][i]=LinFac(uKmin);
+maxL[][i]=LinFac(uKmax);
+
+minA[][i]= dt*Perm(Sat(uKmin));
+maxA[][i]= dt*Perm(Sat(uKmax));
+
+welem[][i]=sqrt(Km*minA[][i]/minL[][i]);
+
+
+
+}
+
+
+//SECTION_______________________________________________________
+//%%%%%%%%%%%%%%%% A POSTERIORI ESTIMATES%%%%%%%%%%%%%%%%%%%%%
+//%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+//--------------------------------------------------------------
+
+
+
+
+//Subsection%%%%%%% EQUILIBRATED FLUX CALCULATION %%%%%%%%%%%%%%
+
+[sigma1,sigma2,Sproj]=[0,0,0]; //initialization
+MaxVarCons=1;
+
+for (int i = 0; i < Ntot; i++){
+
+//----------------DEFINITIONS-----------------------------
+ThLoc=Ta[i];//Assigning the local mesh
+psia[][i]=1;//Defining the hat function
+
+
+RTLoc [sga1,sga2,gma],[v1,v2,q]; // variables for local patchwise equilibrated flux contributions
+
+WhLoc waelem=welem, minLa=minL, maxLa=maxL, minAa=minA, maxAa=maxA;
+
+wa[i]=fmin(1,Cstar*sqrt(waelem[].max/diamA[i]));
+//wa[i]=1;
+
+
+//Computation of the variability constant
+varCons[i]=(pow(diamA[i],2)*maxLa[].max+ pow(pi,2)*maxAa[].max)/(pow(diamA[i],2)*minLa[].min+ pow(pi,2)*minAa[].min);
+varCons[i]=fmax((maxAa[].max/minAa[].min),varCons[i]);
+MaxVarCons=fmax(MaxVarCons,varCons[i]);
+
+
+/**** To test for residual if it exists
+real imbalance=int2d(ThLoc)(grad(psia)'*K*Flux +psia*(Lin0+LinS));
+
+cout<<"imbalance in element "<< i<< "\t is: \t"<< imbalance<<endl;
+*/
+
+
+
+//---------------SOLVING MFEM--------------------------
+// local flux equilibration variational form
+	// zero normal flux on label = 10 boundary
+    
+
+
+    varf aFl([sga1,sga2,gma],[v1,v2,q]) = int2d(ThLoc)(([v1,v2]'*Kinv*[sga1,sga2])*(wa[i]^2/minA)
+       - (gma*Div(v1,v2))/minL + Div(sga1,sga2)*q + gma*q)
+       + on(1,2,3,4,10,sga1=0,sga2=0) + on(5,gma=psia*LinFac(Poutput)*Poutput)+ on(6,gma=psia*LinFac(Pinput)*Pinput);
+	
+	// matrix of the local flux equilibration 
+    matrix MatrLocEquil=aFl(RTLoc,RTLoc, solver=SolverLoc); //LU also possible
+
+    // local flux equilibration right-hand side	form		
+	// zero normal flux on label = 10 boundary
+    varf lrhs([unsused1,unsused2,unsused3],[v1,v2,q]) = int2d(ThLoc)( 
+		- psia*(([v1,v2]'*[Fproj1,Fproj2])*(wa[i]^2/minA) + LinS*q +(Lin0/minL)*Div(v1,v2))
+		- grad(psia)'*K*[Fproj1,Fproj2]*q);
+    
+	RTLoc [F,F1,F2]; // right-hand side variables
+	F[] = lrhs(0,RTLoc); // right-hand side of the local flux equilibration 
+
+    // solve the local equilibration problem to get [sigma1_a, sigma2_a, gamma_a]
+	sga1[] = MatrLocEquil^-1*F[]; // sga1[] contains the triplet sga1,sga2,gma
+    //        sga1[][2]=sga1[][2]+ SlocProj;
+
+
+
+//Subsubsection %%%%%%%%%%LOCAL 2 GLOBAL CONVERSION%%%%%%%%%%%%
+	// prepare the global to local conversion maps
+	real[int] SignMap(RTLoc.ndof); 		// sign convention - one or minus one
+	int[int] LocGlobMap(RTLoc.ndof); 	// local to global map - LocGlobMap[j] contains the global 
+									   	// number (0 to #DoF-1) of the DoF locally numbered as 
+									   	// 0<=j<=#LocalDoF-1
+
+    RTLoc [lnum1,lnum2,lnum3]; // variables for global to local conversion
+    [lnum1,lnum2,lnum3] = [gnum1,gnum2,gnum3]; // lnum1[]: vector only defined on the patch 
+											   // containing numbering of the global DoFs, starting from 1
+
+    // fill the global to local conversion maps
+	for(int j=0;j<lnum1[].n;++j) 
+    {
+		SignMap[j]= lnum1[][j] < 0 ? -1 : 1; // sign is always one???
+		LocGlobMap[j]= abs(lnum1[][j])-0.5; // F. Hecht's hack to always subtract one
+		if(LocGlobMap[j]>= 999999999) LocGlobMap[j]=-1; // F. Hecht's hack 
+}
+
+	// write the local solution [sigma1_a, sigma2_a, Sproj_a] into the global function [sigma1,sigma2,Sproj]
+    sga1[]= sga1[].*SignMap;		// sign conversion
+    real[int] extr(sga1[].n);		// vector extr[] of same length as sga1[]
+    extr = sigma1[](LocGlobMap);	// copy corresponding entries from the global sigma1[] into extr[]
+    sga1[] += extr;					// add contribution extr[] to sga1[]
+    sigma1[](LocGlobMap) = sga1[];	// put (sga1[] + extr[]) back to sigma1[]
+
+psia[][i]=0; // undefine the hat function for vertex i
+
+}
+
+
+
+//Subsection%%%%%%%%%% ERROR FLUX EQUILIBRATION%%%%%%%%%%%%%%%
+
+varf varfEstFl(unused,chiK) = int2d(Th)(chiK*([sigma1,sigma2]+K*[Fproj1,Fproj2])'*Kinv*([sigma1,sigma2]+K*[Fproj1,Fproj2])/(dt*PermI));
+
+EstFl[]=varfEstFl(0,Wh0);
+errFlux[Iter]=int2d(Th)(EstFl/AreaK);
+
+
+//Subsection%%%%%%%%%% ERROR SOURCE ESTIMATOR%%%%%%%%%%%%%%%
+varf varfEstS(unused,chiK) = int2d(Th)(chiK*(Lin0-Sproj)*(Lin0-Sproj)/LinI);
+
+EstS[]=varfEstS(0,Wh0);
+errSource[Iter]=int2d(Th)(EstS/AreaK);
+
+EstFl[]=sqrt(EstFl[]);
+EstS[]=sqrt(EstS[]);
+
+
+
+//Subsection%%%%%%%%%% ERROR DATA OSCILLATION %%%%%%%%%%%%%%%
+varf varfEstOsc(unused,chiK) = int2d(Th)(chiK*(LinS-Shproj)*(LinS-Shproj));
+
+EstOsc[]=varfEstOsc(0,Wh0);
+EstOsc[]=sqrt(EstOsc[]);
+
+
+
+//Subsection%%%%%%%%%% QUADRATURE ERRORS %%%%%%%%%%%%%%%
+//computing the flux quadrature error
+varf varfQuadFl(unused,chiK) = int2d(Th)(chiK*([Fproj1,Fproj2]-Flux)'*K*([Fproj1,Fproj2]-Flux)/(dt*PermI));
+
+
+//Computing the source projection error
+problem LinProj(Shproj,qproj)=int2d(Th)(Shproj*qproj)-int2d(Th)(Lin0*qproj);
+LinProj;
+varf varfQuadS(unused,chiK) = int2d(Th)(chiK*(Lin0-Shproj)*(Lin0-Shproj)/LinI);
+
+EstQdFl[]=varfQuadFl(0,Wh0);
+EstQdS[]=varfQuadS(0,Wh0);
+
+
+EstQdFl[]=sqrt(EstQdFl[]);
+EstQdS[]=sqrt(EstQdS[]);
+
+//Subsection%%%%%%%%% ERROR LINEARIZATION ELEMENTWISE %%%%%%%%%
+
+varf varfEstLin(unused,chiK) = int2d(Tref)(chiK*(LinI*du*du + dt*PermI*(grad(du)'*K*grad(du))));
+
+
+EstLin[]=varfEstLin(0,Wh0);
+EstLin[]=sqrt(EstLin[]);
+
+
+//Subsection%%%%%%% ERROR TOTAL ELEMENTWISE ESTIMATOR%%%%%%%%%
+
+for (int i = 0; i < Nelem; i++){
+wK[][i]=hK[][i]/sqrt(pi^2*minA[][i]+ minL[][i]*hK[][i]^2);
+welem[][i]=fmin(1,Cstar*sqrt(welem[][i]/hK[][i]));
+
+EstOsc[][i]=wK[][i]*EstOsc[][i];
+
+EstK[][i]=welem[][i]*EstFl[][i] + EstS[][i] + EstOsc[][i]+ EstQdFl[][i];
+
+
+EstK[][i]=dist(EstK[][i],EstLin[][i]);
+
+}
+
+
+
+//Subsection%%%%%%%%%% ESTIMATOR OUTPUTS %%%%%%%%%%%%%%%
+
+errTot[Iter]=sqrt(int2d(Th)(EstK*EstK/AreaK));
+//errTot[Iter]=errTot[Iter]+sqrt(int2d(Th)((wK^2)*EstOsc/AreaK));
+
+//This condition determines where the adaptive algorithm would stop
+if(errLin[Iter]<gStop*errTot[Iter]) AdapStop=AdapStop+1;
+
+if((Iter%SaveInt==1)||(AdapStop==1))
+{
+temp[]=log10(EstK[]);
+isovalues=temp[].min:(temp[].max-temp[].min)/10:temp[].max; 
+plot(temp,value=true,fill=1,viso=isovalues,cmm="Element-wise estimator",hsv=jet,ps="Output/Est_Element_"+Iter+".eps");
+}
+
+
+cout<<"Iteration: "<<Iter<<",\t Linearization est.: "<<errLin[Iter]<<",\t Discretization est.: "<< errTot[Iter]<<",\t variability: "<<MaxVarCons<<endl;
+
+
+
+//SECTION_______________________________________________________
+//%%%%%%%%%%%%%%%% EXACT ERROR COMPUTATION %%%%%%%%%%%%%%%%%%%%%
+//%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+//--------------------------------------------------------------
+
+
+RefSol;
+
+varf varfErrR(unused,chiK) = int2d(Th)(chiK*(LinI*duref*duref+dt*PermI*grad(duref)'*K*grad(duref)));
+
+ErrR[]=varfErrR(0,Wh0);
+errorExt[Iter]=sqrt(int2d(Tref)(LinI*duref*duref+dt*PermI*grad(duref)'*K*grad(duref)));
+ErrR[]=sqrt(ErrR[]);
+
+
+//Effectivity computation
+
+EffInd[Iter]=errTot[Iter]/errorExt[Iter];
+
+
+
+if((Iter%SaveInt==1)||(AdapStop==1))
+{
+temp[]=log10(ErrR[]);
+isovalues=temp[].min:(temp[].max-temp[].min)/10:temp[].max; 
+plot(temp,value=true,fill=1,viso=isovalues,cmm="Error",hsv=jet,ps="Output/Error_"+Iter+".eps");
+}
+
+
+//Output string
+cout<<"For iteration: "<<Iter<<",\t error: "<<errorExt[Iter]<<",\t effectivity index: "<<EffInd[Iter]<<endl;
+
+
+
+//WRITING IN FILE_______________________________________________
+
+for(int i=0;i<Nelem;i++)
+{
+
+Eff[][i]=EstK[][i]/ErrR[][i];
+
+FileFl<<EstFl[][i]<<"\t";
+FileS<<EstS[][i]<<"\t";
+FileOsc<<EstOsc[][i]<<"\t";
+FileEstK<<EstK[][i]<<"\t";
+FileQdFl<<EstQdFl[][i]<<"\t";
+FileQdS<<EstQdS[][i]<<"\t";
+
+
+FileErr<<ErrR[][i]<<"\t";
+
+
+}
+
+
+FileErrLin<<Iter<<"\t"<<errLin[Iter]<<"\t"<<errTot[Iter]<<"\t"<<errorExt[Iter]<<"\t"<<EffInd[Iter]<<"\t"<<MaxVarCons<<endl;
+
+FileFl<<endl; FileS<<endl;FileOsc<<endl; 
+FileEstK<<endl;FileQdFl<<endl;FileQdS<<endl;
+FileErr<<endl;
+
+
+if(AdapStop==1)
+{
+temp[]=Eff[];
+isovalues=temp[].min:(temp[].max-temp[].min)/10:temp[].max; 
+plot(temp,value=true,fill=1,viso=isovalues,cmm="Local Effectivity Indices",hsv=jet,ps="Output/Eff_"+Iter+".eps");
+}
+
+
+}
