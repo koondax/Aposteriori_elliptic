@@ -1,6 +1,14 @@
 # Aposteriori_elliptic
 # Desciption
-This folder contains codes for the paper "Guaranteed, locally efficient, and robust a posteriori estimates for nonlinear elliptic problems in iteration-dependent norms. An orthogonal decomposition result based on iterative linearization"
+This folder contains codes for the paper 
+
+"Guaranteed, locally efficient, and robust a posteriori estimates for nonlinear elliptic problems in iteration-dependent norms. An orthogonal decomposition result based on iterative linearization"
+
+by Koondi Mitra and Martin Vohralik.
+
+Please cite us, if you use the code.
+
+
 # Details
 * The main coding platform is FreeFem.
 * The edp files can run directly if FreeFem is installed and a folder names 'Output' is present in the directory.
