@@ -4,7 +4,8 @@ This folder contains codes for the paper "Guaranteed, locally efficient, and rob
 * The coding platform is FreeFem
 # File list
  * main.edp: Contains the code for L/M/Picard schemes for time-discrete Richards equation. It is the most commented code.
- * Kacanov.edp: Contains the code for Kacanov scheme for the mean curvature flow problem.
+ * Kacanov.edp: Contains the code for the Kacanov scheme for the mean curvature flow problem.
+ * Zarantonello.edp: Contains the code for the Zarantonello scheme for the mean curvature flow problem.
 
 
 
